@@ -3,7 +3,7 @@
  * ============================================================ */
 window.CFG = {
   // Apps Script 웹앱 배포 URL. 비워두면 data.js 스냅샷 사용
-  API_URL: '',
+  API_URL: 'https://script.google.com/macros/s/AKfycbx2Co8J3JYAxRvTYdKYg0DtNKbwHtZt0BreIi7RYNlqhWBTs4YULwAOI6r8lLTQh72F/exec',
 
   // 표준 카테고리 → 색상 (그룹 계열 색으로 통일감 유지)
   colors: {
