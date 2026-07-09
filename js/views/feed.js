@@ -60,7 +60,7 @@ window.VIEW_FEED = (() => {
 
   function render(root) {
     shown = BATCH;
-    const groups = ['식사', '건강', '교통/통신', '관계', '여가', '꾸미기', '주거', '가족', '수입'];
+    const groups = ['식사', '건강', '교통/통신', '관계', '여가', '꾸미기', '주거', '가족', '금융', '수입'];
     root.innerHTML = `
       <div class="search-bar"><i class="fa-solid fa-magnifying-glass"></i>
         <input id="fd-q" placeholder="장소 · 내역 · 메모 검색 (${U.comma(S.tx.length)}건)" value="${U.esc(q)}"></div>

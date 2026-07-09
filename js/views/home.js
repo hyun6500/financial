@@ -41,6 +41,11 @@ window.VIEW_HOME = (() => {
         <div id="heat"></div>
       </div>
 
+      <div class="card" style="animation-delay:.1s">
+        <h3><i class="fa-solid fa-calendar-day"></i>이번 달 가계부 <span class="more">날짜를 누르면 그날 내역이 보여요</span></h3>
+        <div id="ledger-cal"></div>
+      </div>
+
       <div class="card" style="animation-delay:.12s">
         <h3><i class="fa-solid fa-wand-magic-sparkles"></i>이번 달 인사이트</h3>
         <div id="ins"></div>
@@ -68,6 +73,9 @@ window.VIEW_HOME = (() => {
 
     /* 히트맵 */
     CH.heatmap(root.querySelector('#heat'), S.byDay, 365);
+
+    /* 이번 달 가계부 캘린더 */
+    renderLedgerCal(root.querySelector('#ledger-cal'), mk);
 
     /* 인사이트 */
     const ins = INSIGHTS.build(mk);
@@ -118,6 +126,68 @@ window.VIEW_HOME = (() => {
         ],
       },
       options: o,
+    });
+  }
+
+  /* ---- 이번 달 가계부: 달력 + 선택일 내역 (월 이동 가능) ---- */
+  function renderLedgerCal(box, mk, selDay) {
+    const m = S.byMonth.get(mk) || { txs: [], exp: 0, inc: 0 };
+    const [y, mo] = mk.split('-').map(Number);
+    const daysInM = new Date(y, mo, 0).getDate();
+    const firstDow = new Date(y, mo - 1, 1).getDay();
+    const idx = S.months.indexOf(mk);
+    const dayMap = new Map(); // 'DD' → {exp, inc}
+    for (const t of m.txs) {
+      const dd = t.d.slice(8);
+      if (!dayMap.has(dd)) dayMap.set(dd, { exp: 0, inc: 0 });
+      dayMap.get(dd)[t.ty === 'i' ? 'inc' : 'exp'] += t.a;
+    }
+    if (!selDay) { // 기본 선택: 기록이 있는 마지막 날
+      const dds = [...dayMap.keys()].sort();
+      selDay = dds[dds.length - 1] || null;
+    }
+
+    let cells = ['일', '월', '화', '수', '목', '금', '토']
+      .map((w, i) => `<div class="wd ${i === 0 ? 'sun' : ''}">${w}</div>`).join('');
+    for (let i = 0; i < firstDow; i++) cells += '<div class="dcell empty"></div>';
+    for (let d = 1; d <= daysInM; d++) {
+      const dd = String(d).padStart(2, '0');
+      const v = dayMap.get(dd);
+      cells += `<div class="dcell ${dd === selDay ? 'sel' : ''}" data-d="${dd}">
+        <span class="dn">${d}</span>
+        ${v && v.exp ? `<span class="da num sec">${U.won(v.exp)}</span>` : ''}
+        ${v && v.inc ? `<span class="da inc num sec">+${U.won(v.inc)}</span>` : ''}</div>`;
+    }
+
+    const dayTx = selDay ? m.txs.filter(t => t.d.slice(8) === selDay) : [];
+    const dv = dayMap.get(selDay) || { exp: 0, inc: 0 };
+    box.innerHTML = `
+      <div class="cal-nav">
+        <button data-nav="-1"><i class="fa-solid fa-chevron-left"></i></button>
+        <span class="m">${U.mLabel(mk)}</span>
+        <button data-nav="1" ${idx >= S.months.length - 1 ? 'disabled style="opacity:.3"' : ''}><i class="fa-solid fa-chevron-right"></i></button>
+        <span class="sum sec">지출 ${U.won(m.exp, true)} · 수입 ${U.won(m.inc)}</span>
+      </div>
+      <div class="cal">${cells}</div>
+      ${selDay ? `<div class="cal-day-title">${mk.replace('-', '.')}.${selDay}
+        <span class="s sec">${dv.exp ? '지출 ' + U.won(dv.exp, true) : ''}${dv.inc ? ' · 수입 ' + U.won(dv.inc, true) : ''}</span></div>
+      <div class="rows">${dayTx.map(t => {
+        const col = t.ty === 'i' ? CH.css('--jade') : (CFG.colors[t.sc] || '#6B7280');
+        return `<div class="row">
+          <div class="ic" style="background:${col}22;color:${col}"><i class="fa-solid ${t.ty === 'i' ? 'fa-sack-dollar' : (CFG.icons[t.sc] || 'fa-receipt')}"></i></div>
+          <div class="t"><div class="p">${U.esc(t.p || t.dt || '-')}</div>
+            <div class="s">${U.esc([t.dt, t.sc].filter(Boolean).join(' · '))}${t.n ? ' · ' + U.esc(t.n) : ''}</div></div>
+          <div class="a num sec ${t.ty === 'i' ? 'inc' : 'exp'}">${t.ty === 'i' ? '+' : ''}${U.won(t.a, true)}</div></div>`;
+      }).join('') || '<p class="footnote">이 날은 기록이 없어요.</p>'}</div>` : '<p class="footnote">이 달은 기록이 없어요.</p>'}`;
+
+    box.querySelector('.cal-nav').addEventListener('click', e => {
+      const b = e.target.closest('[data-nav]'); if (!b || b.disabled) return;
+      const next = S.months[idx + (+b.dataset.nav)];
+      if (next) renderLedgerCal(box, next);
+    });
+    box.querySelector('.cal').addEventListener('click', e => {
+      const c = e.target.closest('.dcell'); if (!c || !c.dataset.d) return;
+      renderLedgerCal(box, mk, c.dataset.d);
     });
   }
 

@@ -29,9 +29,45 @@ GROUP_MAP = {
     '선물':'관계','경조사':'관계','보은':'관계','회비':'관계',
     '여행':'여가','문화':'여가','놀이':'여가','교육':'여가',
     '헤어':'꾸미기','패션':'꾸미기','쇼핑':'꾸미기','미용':'꾸미기',
-    '관리비':'주거','부모님 용돈':'가족',
+    '관리비':'주거','부모님 용돈':'가족','금융':'금융',
 }
 INCOME_CATS = {'월급','상여금','부수입','직장 외 부수입','당근','보험 환급'}
+
+# ---------- 자동 분류 (카테고리 미입력 지출용) ----------
+# 1) 장소 학습: 같은 장소가 라벨된 이력이 있으면 최빈 카테고리 상속
+# 2) 키워드 규칙: 토스/뱅크샐러드류 표준 분류를 참고한 패턴
+# 3) 남으면 '기타'
+KEYWORD_RULES = [
+    (r'용돈|엄마|아빠|엄빠|부모님', '부모님 용돈'),
+    (r'KTX|코레일|SRT|기차|항공|공항|호텔|숙소|산장|펜션|리조트|트래블|여행', '여행'),
+    (r'병원|의원|치과|한의원|약국|검진', '의료비'),
+    (r'크로스핏|피트니스|헬스|필라테스|요가|수영', '운동'),
+    (r'지하철|버스|택시|티머니|교통', '대중교통'),
+    (r'KT$|LG|SKT|유플러스|통신', '통신비'),
+    (r'국세청|세금|수수료|복비|이자|보증|송금|환전|카카오페이|네이버파이낸셜|토스|투자', '금융'),
+    (r'루이비통|디스커버리|쿠팡|무신사|패밀리샵|백화점|아울렛|올리브영|다이소|당근', '쇼핑'),
+    (r'스타벅스|커피|카페|베이커리|디저트', '디저트'),
+    (r'CGV|메가박스|롯데시네마|영화|공연|전시|콘서트', '문화'),
+    (r'결혼|축의|조의|부의|장례', '경조사'),
+    (r'선물', '선물'),
+    (r'강의|클래스|캠퍼스|인강|스터디', '교육'),
+    (r'보험|화재해상', '보험비'),
+    (r'마티니|와인|칵테일|맥주|포차|주점', '놀이'),
+    (r'닌텐도|게임|플스|스팀', '놀이'),
+    (r'\d개월 등록', '운동'),
+    (r'비빔밥|식당|국밥|김밥', '외식/점심'),
+]
+
+def infer_category(place, detail, place_vote):
+    """미입력 카테고리 추론. (카테고리, 추론여부) 반환"""
+    key = (place or '').strip()
+    if key and key in place_vote:
+        return place_vote[key], True
+    text = f"{place or ''} {detail or ''}"
+    for pat, cat in KEYWORD_RULES:
+        if re.search(pat, text, re.I):
+            return cat, True
+    return '기타', True
 
 def anon(name):
     """사람 이름 마스킹: '김솔아 96' → '김** 96'"""
@@ -82,6 +118,11 @@ for name in month_sheets:
         # 실거래는 장소·세부내역·카테고리 중 최소 하나를 가짐
         if place is None and detail is None and cat is None:
             continue
+        # 계산 메모 행 제외: 장소 칸이 숫자이거나 '총 123' 형태인데 내역·카테고리가 없는 경우
+        if detail is None and cat is None and place is not None:
+            ps = str(place).strip()
+            if re.match(r'^[\d,.\s]+$', ps) or re.match(r'^총\s*[\d,]+', ps):
+                continue
         # 시트 월과 무관한 템플릿/이월 행 방지: 날짜의 연-월이 시트와 2개월 이상 어긋나면 스킵
         rec = {'d': jd(cur), 'p': str(place).strip() if place else None,
                'dt': str(detail).strip() if detail else None,
@@ -97,10 +138,29 @@ for name in month_sheets:
         if isinstance(exp, (int, float)) and exp is not None:
             r2 = dict(rec)
             r2['ty'] = 'e'; r2['a'] = round(float(exp))
-            c = str(cat).strip() if cat else '미분류'
-            sc = CAT_MAP.get(c, '미분류' if c in ('-', '미분류') else c)
-            r2['c'] = c; r2['sc'] = sc; r2['g'] = GROUP_MAP.get(sc, '기타')
+            c = str(cat).strip() if cat else None
+            r2['c'] = c or '미입력'
+            if c and c not in ('-',):
+                sc = CAT_MAP.get(c, c)
+                r2['sc'] = sc; r2['g'] = GROUP_MAP.get(sc, '기타')
+            else:
+                r2['sc'] = None  # 2패스에서 추론
             tx.append(r2)
+
+# ---- 2패스: 장소별 최빈 카테고리 학습 후 미입력분 추론 ----
+from collections import Counter as _C
+place_votes = {}
+for t in tx:
+    if t['ty'] == 'e' and t['sc'] and t['p']:
+        place_votes.setdefault(t['p'], _C())[t['sc']] += 1
+place_vote = {p: c.most_common(1)[0][0] for p, c in place_votes.items()}
+inferred = 0
+for t in tx:
+    if t['ty'] == 'e' and t['sc'] is None:
+        sc, inf = infer_category(t['p'], t['dt'], place_vote)
+        t['sc'] = sc; t['g'] = GROUP_MAP.get(sc, '기타')
+        if inf: t['inf'] = 1; inferred += 1
+print(f"자동 분류: {inferred}건 추론 완료")
 
 # ---- 엄빠 용돈 원장 (최신 시트에서 '엄빠 용돈' 셀 탐색) ----
 parents = []

@@ -33,9 +33,38 @@ var GROUP_MAP = {
   '선물':'관계','경조사':'관계','보은':'관계','회비':'관계',
   '여행':'여가','문화':'여가','놀이':'여가','교육':'여가',
   '헤어':'꾸미기','패션':'꾸미기','쇼핑':'꾸미기','미용':'꾸미기',
-  '관리비':'주거','부모님 용돈':'가족'
+  '관리비':'주거','부모님 용돈':'가족','금융':'금융'
 };
 var INCOME_CATS = { '월급':1,'상여금':1,'부수입':1,'직장 외 부수입':1,'당근':1,'보험 환급':1 };
+// 카테고리 미입력 지출 자동 분류: ① 장소 학습(최빈) ② 키워드 ③ '기타'
+var KEYWORD_RULES = [
+  [/용돈|엄마|아빠|엄빠|부모님/, '부모님 용돈'],
+  [/KTX|코레일|SRT|기차|항공|공항|호텔|숙소|산장|펜션|리조트|트래블|여행/i, '여행'],
+  [/병원|의원|치과|한의원|약국|검진/, '의료비'],
+  [/크로스핏|피트니스|헬스|필라테스|요가|수영/, '운동'],
+  [/지하철|버스|택시|티머니|교통/, '대중교통'],
+  [/KT$|LG|SKT|유플러스|통신/, '통신비'],
+  [/국세청|세금|수수료|복비|이자|보증|송금|환전|카카오페이|네이버파이낸셜|토스|투자/, '금융'],
+  [/루이비통|디스커버리|쿠팡|무신사|패밀리샵|백화점|아울렛|올리브영|다이소|당근/, '쇼핑'],
+  [/스타벅스|커피|카페|베이커리|디저트/, '디저트'],
+  [/CGV|메가박스|롯데시네마|영화|공연|전시|콘서트/, '문화'],
+  [/결혼|축의|조의|부의|장례/, '경조사'],
+  [/선물/, '선물'],
+  [/강의|클래스|캠퍼스|인강|스터디/, '교육'],
+  [/보험|화재해상/, '보험비'],
+  [/마티니|와인|칵테일|맥주|포차|주점/, '놀이'],
+  [/닌텐도|게임|플스|스팀/, '놀이'],
+  [/\d개월 등록/, '운동'],
+  [/비빔밥|식당|국밥|김밥/, '외식/점심']
+];
+function inferCategory_(place, detail, placeVote) {
+  var key = (place || '').trim();
+  if (key && placeVote[key]) return placeVote[key];
+  var text = (place || '') + ' ' + (detail || '');
+  for (var i = 0; i < KEYWORD_RULES.length; i++)
+    if (KEYWORD_RULES[i][0].test(text)) return KEYWORD_RULES[i][1];
+  return '기타';
+}
 
 function doGet(e) {
   var force = e && e.parameter && e.parameter.refresh;
@@ -90,6 +119,10 @@ function buildData_() {
       if (empty_(inc) && empty_(exp) && empty_(place) && empty_(detail) && empty_(cat)) continue;
       if (!cur) continue;
       if (empty_(place) && empty_(detail) && empty_(cat)) continue; // 부속 테이블 방지
+      if (empty_(detail) && empty_(cat) && !empty_(place)) { // 계산 메모 행 제외
+        var ps = String(place).trim();
+        if (/^[\d,.\s]+$/.test(ps) || /^총\s*[\d,]+/.test(ps)) continue;
+      }
       var base = { d: iso_(cur), p: str_(place), dt: str_(detail), n: str_(note), w: str_(w), m: mk };
       if (typeof inc === 'number' && inc) {
         var rec = clone_(base);
@@ -101,10 +134,36 @@ function buildData_() {
       if (typeof exp === 'number') {
         var r2 = clone_(base);
         r2.ty = 'e'; r2.a = Math.round(exp);
-        var ce = str_(cat) || '미분류';
-        var sc = CAT_MAP[ce] || ((ce === '-' || ce === '미분류') ? '미분류' : ce);
-        r2.c = ce; r2.sc = sc; r2.g = GROUP_MAP[sc] || '기타'; tx.push(r2);
+        var ce = str_(cat);
+        r2.c = ce || '미입력';
+        if (ce && ce !== '-') {
+          var sc = CAT_MAP[ce] || ce;
+          r2.sc = sc; r2.g = GROUP_MAP[sc] || '기타';
+        } else { r2.sc = null; }
+        tx.push(r2);
       }
+    }
+  });
+
+  // 2패스: 장소별 최빈 카테고리 학습 → 미입력분 추론
+  var votes = {};
+  tx.forEach(function (t) {
+    if (t.ty === 'e' && t.sc && t.p) {
+      if (!votes[t.p]) votes[t.p] = {};
+      votes[t.p][t.sc] = (votes[t.p][t.sc] || 0) + 1;
+    }
+  });
+  var placeVote = {};
+  Object.keys(votes).forEach(function (p) {
+    var best = null;
+    Object.keys(votes[p]).forEach(function (c) { if (!best || votes[p][c] > votes[p][best]) best = c; });
+    placeVote[p] = best;
+  });
+  tx.forEach(function (t) {
+    if (t.ty === 'e' && !t.sc) {
+      t.sc = inferCategory_(t.p, t.dt, placeVote);
+      t.g = GROUP_MAP[t.sc] || '기타';
+      t.inf = 1;
     }
   });
 
